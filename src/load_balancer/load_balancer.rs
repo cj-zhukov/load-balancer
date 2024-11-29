@@ -44,7 +44,7 @@ impl LoadBalancer {
             .method(req.method())
             .uri(new_uri)
             .body(req.into_body())
-            .map_err(|e| LoadBalancerError::HttpError(e))?;
+            .map_err(LoadBalancerError::HttpError)?;
 
         // Copy headers from the original request
         for (key, value) in headers.iter() {
