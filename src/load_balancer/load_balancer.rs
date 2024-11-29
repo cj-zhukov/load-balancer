@@ -34,7 +34,7 @@ impl LoadBalancer {
         }
 
         // Create a new URI from the worker URI
-        let new_uri = Uri::from_str(&worker_uri).map_err(|e| LoadBalancerError::InvalidUri(e))?;
+        let new_uri = Uri::from_str(&worker_uri).map_err(LoadBalancerError::InvalidUri)?;
 
         // Extract the headers from the original request
         let headers = req.headers().clone();
