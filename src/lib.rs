@@ -17,7 +17,7 @@ pub type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
 pub async fn handler(req: Request<Incoming>, load_balancer: Arc<RwLock<LoadBalancer>>) -> Result<Response<BoxBody>, LoadBalancerError> {
     let mut load_balancer = load_balancer.write().await;
-    let reponse = load_balancer.forward_request(req).await?;
+    load_balancer.forward_request(req).await
     
     Ok(reponse)
 }
