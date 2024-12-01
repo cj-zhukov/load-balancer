@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use color_eyre::eyre::ContextCompat;
 use http_body_util::BodyExt;
 use hyper::{
     client::conn::http1,
@@ -35,7 +36,15 @@ impl LoadBalancer {
 
         // Create a new URI from the worker URI
         let new_uri = Uri::from_str(&worker_uri).map_err(LoadBalancerError::InvalidUri)?;
-        let new_address = format!("{}:{}", new_uri.host().unwrap(), new_uri.port().unwrap());
+        let new_host = new_uri
+            .host()
+            .wrap_err(format!("failed parsing uri: {new_uri} to get host"))
+            .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+        let new_port = new_uri
+            .port()
+            .wrap_err(format!("failed parsing uri: {new_uri} to get port"))
+            .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+        let new_address = format!("{new_host}:{new_port}");
 
         // Extract the headers from the original request
         let headers = req.headers().clone();
