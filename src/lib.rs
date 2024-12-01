@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use error::LoadBalancerError;
+use bytes::Bytes;
 use hyper::{
-    Body, Request, Response,
+    body::Incoming, Request, Response,
 };
 use tokio::sync::RwLock;
 
@@ -10,13 +10,14 @@ pub mod load_balancer;
 pub mod error;
 pub mod utils;
 
+use error::LoadBalancerError;
 pub use load_balancer::{LoadBalancer, WorkerHosts};
 
-pub async fn handle(
-    req: Request<Body>, 
-    load_balancer: Arc<RwLock<LoadBalancer>>,
-) -> Result<Response<Body>, LoadBalancerError> {
+pub type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
+
+pub async fn handler(req: Request<Incoming>, load_balancer: Arc<RwLock<LoadBalancer>>) -> Result<Response<BoxBody>, LoadBalancerError> {
     let mut load_balancer = load_balancer.write().await;
-    let res = load_balancer.forward_request(req)?;
-    Ok(res.await?)
+    let reponse = load_balancer.forward_request(req).await?;
+    
+    Ok(reponse)
 }

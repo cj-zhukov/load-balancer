@@ -1,32 +1,32 @@
 use std::str::FromStr;
 
+use http_body_util::BodyExt;
 use hyper::{
-    client::{ResponseFuture, HttpConnector},
-    Body, Client, Request, Uri,
+    client::conn::http1,
+    body::Incoming, Request, Response, Uri
 };
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpStream;
 
+use crate::BoxBody;
 use crate::error::LoadBalancerError;
 use super::WorkerHosts;
 
 pub struct LoadBalancer {
-    pub client: Client<HttpConnector>,
     pub worker_hosts: WorkerHosts,
     pub current_worker: usize,
 }
 
 impl LoadBalancer {
     pub fn new(worker_hosts: WorkerHosts) -> Result<Self, LoadBalancerError> {
-        let client = Client::new();
-
         Ok(LoadBalancer {
-            client,
             worker_hosts,
             current_worker: 0,
         })
     }
 
-    pub fn forward_request(&mut self, req: Request<Body>) -> Result<ResponseFuture, LoadBalancerError> {
-        let mut worker_uri = self.get_worker()?.to_owned();
+    pub async fn forward_request(&mut self, req: Request<Incoming>) -> Result<Response<BoxBody>, LoadBalancerError> {
+        let mut worker_uri = self.get_worker()?.to_string();
 
         // Extract the path and query from the original request
         if let Some(path_and_query) = req.uri().path_and_query() {
@@ -35,6 +35,7 @@ impl LoadBalancer {
 
         // Create a new URI from the worker URI
         let new_uri = Uri::from_str(&worker_uri).map_err(LoadBalancerError::InvalidUri)?;
+        let new_address = format!("{}:{}", new_uri.host().unwrap(), new_uri.port().unwrap());
 
         // Extract the headers from the original request
         let headers = req.headers().clone();
@@ -42,7 +43,7 @@ impl LoadBalancer {
         // Clone the original request's headers and method
         let mut new_req = Request::builder()
             .method(req.method())
-            .uri(new_uri)
+            .uri(&new_uri)
             .body(req.into_body())
             .map_err(LoadBalancerError::HttpError)?;
 
@@ -51,7 +52,20 @@ impl LoadBalancer {
             new_req.headers_mut().insert(key, value.clone());
         }
 
-        Ok(self.client.request(new_req))
+        // Sending new request to worker
+        let client_stream = TcpStream::connect(new_address).await?;
+        let io = TokioIo::new(client_stream);
+        let (mut sender, conn) = http1::handshake(io).await?;
+        tokio::task::spawn(async move {
+            if let Err(err) = conn.await {
+                eprintln!("Connection failed: {:?}", err);
+            }
+        });
+
+        let worker_res = sender.send_request(new_req).await?;
+        let res_body = worker_res.into_body().boxed();
+
+        Ok(Response::new(res_body))
     }
 
     fn get_worker(&mut self) -> Result<&str, LoadBalancerError> {
