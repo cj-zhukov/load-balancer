@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-hyper = { version = "0.14.25", features = ["full"] }
+bytes = "1.8.0"
+dotenvy = "0.15.7"
+color-eyre = "0.6"
+hyper = { version = "1.5", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+lazy_static = "1.4.0"
 tokio = { version = "1.26.0", features = ["full"] }
 tower = { version = "0.5.1", features = ["full"] }
 regex = "1"
-dotenvy = "0.15.7"
-lazy_static = "1.4.0"
 thiserror = "2"
-color-eyre = "0.6"
