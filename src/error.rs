@@ -1,4 +1,5 @@
 use color_eyre::eyre::Report;
+use datafusion::error::DataFusionError;
 use thiserror::Error;
 use hyper::http::Error as HttpError;
 use hyper::http::uri::InvalidUri;
@@ -22,6 +23,9 @@ pub enum LoadBalancerError {
 
     #[error("Invalid uri")]
     InvalidUri(#[from] InvalidUri),
+
+    #[error("DataFusionError")]
+    DataFusionError(#[from] DataFusionError),
 
     #[error("IO error")]
     IoError(#[from] IoError),
