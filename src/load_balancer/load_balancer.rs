@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use color_eyre::eyre:: ContextCompat;
+use color_eyre::eyre::ContextCompat;
 use datafusion::prelude::*;
 use http_body_util::BodyExt;
 use hyper::{
