@@ -4,8 +4,9 @@ use chrono::NaiveDateTime;
 use datafusion::arrow::array::{BooleanArray, Int64Array, RecordBatch, StringArray};
 use datafusion::prelude::*;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use serde_json::Value;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::Json, PgPool};
+use sqlx::PgPool;
 
 use crate::utils::{LOAD_BALANCER_NAME, TABLE_NAME};
 use super::DataStoreError;
@@ -17,13 +18,8 @@ pub struct Table {
     pub worker_name: String,
     pub port_name: String,
     pub active: bool,
-    pub info: Option<Json<Info>>, 
+    pub info: Option<Value>, 
     pub inserted_at: NaiveDateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Info {
-    pub cnt_conns: i32,
 }
 
 impl Table {
