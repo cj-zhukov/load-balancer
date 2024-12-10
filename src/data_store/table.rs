@@ -6,9 +6,10 @@ use datafusion::prelude::*;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use serde_json::Value;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
-use crate::utils::{LOAD_BALANCER_NAME, TABLE_NAME};
+use crate::service::DbConRef;
+use crate::domain::Database;
+use crate::utils::{LOAD_BALANCER_NAME, PG_TABLE_NAME};
 use super::DataStoreError;
 
 #[derive(Serialize, Deserialize, Debug, sqlx::FromRow)]
@@ -37,14 +38,6 @@ impl Table {
 }
 
 impl Table {
-    async fn fetch(pool: PgPool) -> Result<Vec<Self>, DataStoreError> {
-        let sql = format!("select * from {} where server_name = '{}' and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
-        let query = sqlx::query_as::<_, Self>(&sql);
-        let data = query.fetch_all(&pool).await?;
-
-        Ok(data)
-    }
-
     fn to_df(ctx: SessionContext, records: &mut Vec<Self>) -> Result<DataFrame, DataStoreError> {
         let mut ids = Vec::new();
         let mut server_names = Vec::new();
@@ -88,8 +81,13 @@ impl Table {
         Ok(df)
     }
 
-    pub async fn init_table(ctx: SessionContext, pool: PgPool) -> Result<DataFrame, DataStoreError> {
-        let mut records = Self::fetch(pool).await?;
+    pub async fn init_table<T>(ctx: SessionContext, db_con: DbConRef<T>) -> Result<DataFrame, DataStoreError> 
+    where
+        T: Database + Send + Sync,
+    {
+        let sql = format!("select * from {} where server_name = '{}' and active is true", PG_TABLE_NAME, LOAD_BALANCER_NAME);
+        let db_con = db_con.read().await;
+        let mut records = db_con.fetch_data(&sql).await?;
         if records.is_empty() {
             return Err(DataStoreError::EmptyDataframeError);
         }
