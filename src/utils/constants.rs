@@ -4,12 +4,13 @@ use dotenvy::dotenv;
 use secrecy::Secret;
 
 pub const LOAD_BALANCER_NAME: &str = "ultra";
-pub const PG_MAX_DB_CONS: u32 = 100;
-pub const PG_TABLE_NAME: &str = "workers"; // postgres table name
+pub const MAX_DB_CONS: u32 = 100;
+pub const TABLE_NAME: &str = "workers"; // postgres/sqlite table name
 pub const DF_TABLE_NAME: &str = "workers"; // datafusion table name
 
 pub mod env {
     pub const PG_DATABASE_URL_ENV_VAR: &str = "PG_DATABASE_URL";
+    pub const SQLITE_DATABASE_URL_ENV_VAR: &str = "SQLITE_DATABASE_URL";
     pub const LOAD_BALANCER_ADDRESS_ENV_VAR: &str = "LOAD_BALANCER_ADDRESS";
     pub const WORKERS_ADDRESSES_ENV_VAR: &str = "WORKERS_ADDRESSES";
 }
@@ -17,9 +18,19 @@ pub mod env {
 pub static PG_DATABASE_URL: LazyLock<Secret<String>> = LazyLock::new(|| {
     dotenv().ok();
     let secret = std_env::var(env::PG_DATABASE_URL_ENV_VAR)
-        .expect("DATABASE_URL_ENV_VAR must be set.");
+        .expect("PG_DATABASE_URL_ENV_VAR must be set.");
     if secret.is_empty() {
-        panic!("DATABASE_URL_ENV_VAR must not be empty.");
+        panic!("PG_DATABASE_URL_ENV_VAR must not be empty.");
+    }
+    Secret::new(secret)
+});
+
+pub static SQLITE_DATABASE_URL: LazyLock<Secret<String>> = LazyLock::new(|| {
+    dotenv().ok();
+    let secret = std_env::var(env::SQLITE_DATABASE_URL_ENV_VAR)
+        .expect("SQLITE_DATABASE_URL_ENV_VAR must be set.");
+    if secret.is_empty() {
+        panic!("SQLITE_DATABASE_URL_ENV_VAR must not be empty.");
     }
     Secret::new(secret)
 });

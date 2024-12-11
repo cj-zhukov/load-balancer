@@ -9,10 +9,10 @@ use hyper::server::conn::http1;
 
 use load_balancer::{
     data_store::Table, 
-    service::DbConnector, 
+    domain::Database, 
     handler, 
-    service::PostgresDb, 
-    utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, PG_DATABASE_URL, PG_MAX_DB_CONS}, 
+    service::{PostgresDb, SqliteDb}, 
+    utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, MAX_DB_CONS, PG_DATABASE_URL, SQLITE_DATABASE_URL}, 
     LoadBalancer 
 };
 
@@ -20,17 +20,21 @@ use load_balancer::{
 async fn main() -> Result<(), Box<dyn Error>> {
     color_eyre::install().expect("Failed to install color_eyre");
 
-    let pg = PostgresDb::builder()
+    let db = PostgresDb::builder()
         .with_url(PG_DATABASE_URL.expose_secret())
-        .with_max_cons(PG_MAX_DB_CONS)
+        .with_max_cons(MAX_DB_CONS)
         .build()
         .await?;
-    let db_con = DbConnector::new(pg);
-    db_con.run_migrations().await?;
-    let db_con_ref = Arc::new(RwLock::new(db_con));
+    // let db = SqliteDb::builder()
+    //     .with_url(SQLITE_DATABASE_URL.expose_secret())
+    //     .with_max_cons(MAX_DB_CONS)
+    //     .build()
+    //     .await?;
+    db.run_migrations().await?;
+    let db_ref = Arc::new(RwLock::new(db));
 
     let ctx = SessionContext::new();
-    let worker_hosts = Table::init_table(ctx.clone(), db_con_ref).await?; // fetch and store worker hosts as df
+    let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
     df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
 
     let load_balancer = Arc::new(RwLock::new(

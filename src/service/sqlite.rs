@@ -1,23 +1,23 @@
 use async_trait::async_trait;
 use secrecy::{ExposeSecret, Secret};
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Pool, Postgres};
+use sqlx::{migrate::Migrator, sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
 
 use crate::{data_store::Table, domain::Database};
 
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
-pub struct PostgresDbBuilder {
+pub struct SqliteDbBuilder {
     url: String,
     max_cons: u32,
 }
 
-impl Default for PostgresDbBuilder {
+impl Default for SqliteDbBuilder {
     fn default() -> Self {
-        PostgresDbBuilder { url: String::default(), max_cons: 10 }
+        SqliteDbBuilder { url: String::default(), max_cons: 10 }
     }
 }
 
-impl PostgresDbBuilder {
+impl SqliteDbBuilder {
     pub fn with_url(self, url: &str) -> Self {
         Self { url: url.to_string(), max_cons: self.max_cons }
     }
@@ -26,31 +26,31 @@ impl PostgresDbBuilder {
         Self { url: self.url, max_cons }
     }
 
-    pub async fn build(self) -> Result<PostgresDb, sqlx::Error> {
-        let pool = PgPoolOptions::new()
+    pub async fn build(self) -> Result<SqliteDb, sqlx::Error> {
+        let pool = SqlitePoolOptions::new()
             .max_connections(self.max_cons)
             .connect(&self.url)
             .await?;
 
-        Ok(PostgresDb { pool, url: Secret::new(self.url) })
+        Ok(SqliteDb { pool, url: Secret::new(self.url) })
     }
 }
 
 #[derive(Debug)]
-pub struct PostgresDb {
-    pool: Pool<Postgres>,
-    url: Secret<String>,
+pub struct SqliteDb {
+    pool: Pool<Sqlite>,
+    pub url: Secret<String>,
 }
 
-impl AsRef<Pool<Postgres>> for PostgresDb {
-    fn as_ref(&self) -> &Pool<Postgres> {
+impl AsRef<Pool<Sqlite>> for SqliteDb {
+    fn as_ref(&self) -> &Pool<Sqlite> {
         &self.pool
     }
 }
 
-impl PostgresDb {
-    pub fn builder() -> PostgresDbBuilder {
-        PostgresDbBuilder::default()
+impl SqliteDb {
+    pub fn builder() -> SqliteDbBuilder {
+        SqliteDbBuilder::default()
     }
 
     pub fn get_url(&self) -> &str {
@@ -59,14 +59,16 @@ impl PostgresDb {
 }
 
 #[async_trait]
-impl Database for PostgresDb {
+impl Database for SqliteDb {
     async fn execute_query(&self, query: &str) -> Result<(), sqlx::Error> {
         let rows = sqlx::query(query)
             .fetch_all(self.as_ref())
             .await?;
 
         for row in rows {
-            println!("{:?}", row);
+            let id: i64 = row.get("id");
+            let name: String = row.get("worker_name");
+            println!("id: {}, name: {}", id, name);
         }
 
         Ok(())
@@ -77,7 +79,7 @@ impl Database for PostgresDb {
             .run(self.as_ref())
             .await?;
 
-        println!("run migrations for pg server");
+        println!("run migrations for sqlite server");
 
         Ok(())
     }

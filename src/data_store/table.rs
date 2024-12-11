@@ -7,9 +7,9 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use serde_json::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::service::DbConRef;
 use crate::domain::Database;
-use crate::utils::{LOAD_BALANCER_NAME, PG_TABLE_NAME};
+use crate::utils::{LOAD_BALANCER_NAME, TABLE_NAME};
+use crate::DbRef;
 use super::DataStoreError;
 
 #[derive(Serialize, Deserialize, Debug, sqlx::FromRow)]
@@ -81,12 +81,12 @@ impl Table {
         Ok(df)
     }
 
-    pub async fn init_table<T>(ctx: SessionContext, db_con: DbConRef<T>) -> Result<DataFrame, DataStoreError> 
+    pub async fn init_table<T>(ctx: SessionContext, db_ref: DbRef<T>) -> Result<DataFrame, DataStoreError> 
     where
         T: Database + Send + Sync,
     {
-        let sql = format!("select * from {} where server_name = '{}' and active is true", PG_TABLE_NAME, LOAD_BALANCER_NAME);
-        let db_con = db_con.read().await;
+        let sql = format!("select * from {} where server_name = '{}' and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
+        let db_con = db_ref.read().await;
         let mut records = db_con.fetch_data(&sql).await?;
         if records.is_empty() {
             return Err(DataStoreError::EmptyDataframeError);

@@ -1,5 +1,5 @@
 mod postgres;
-mod db_connector;
+mod sqlite;
 
 pub use postgres::*;
-pub use db_connector::*;
+pub use sqlite::*;
