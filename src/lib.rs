@@ -8,7 +8,9 @@ use tokio::sync::RwLock;
 
 pub mod error;
 pub mod data_store;
+pub mod domain;
 pub mod load_balancer;
+pub mod service;
 pub mod utils;
 
 use error::LoadBalancerError;
