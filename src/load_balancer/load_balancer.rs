@@ -1,6 +1,7 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
-use color_eyre::eyre::ContextCompat;
+use color_eyre::eyre::{Context, ContextCompat};
 use datafusion::prelude::*;
 use http_body_util::BodyExt;
 use hyper::{
@@ -9,9 +10,10 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tokio::sync::RwLock;
 
 use crate::data_store::Worker;
-use crate::utils::{validate_address, DF_TABLE_NAME};
+use crate::utils::{df_to_table, validate_address, DF_TABLE_NAME};
 use crate::BoxBody;
 use crate::error::LoadBalancerError;
 
@@ -19,13 +21,20 @@ use crate::error::LoadBalancerError;
 pub struct LoadBalancer {
     pub ctx: SessionContext,
     pub current_worker: usize,
+    pub algorithm: Algorithm,
+}
+
+pub enum Algorithm {
+    RoundRobin, // Distribute requests evenly across all worker servers
+    LeastConnections, // Route requests to the worker server with the least active connections.
 }
 
 impl LoadBalancer {
-    pub fn new(ctx: SessionContext, current_worker: Option<usize>) -> Result<Self, LoadBalancerError> {
+    pub fn new(ctx: SessionContext, current_worker: Option<usize>, algorithm: Option<Algorithm>) -> Result<Self, LoadBalancerError> {
         Ok(LoadBalancer {
             ctx,
             current_worker: current_worker.unwrap_or(0),
+            algorithm: algorithm.unwrap_or(Algorithm::RoundRobin),
         })
     }
 
@@ -59,7 +68,7 @@ impl LoadBalancer {
             new_req.headers_mut().insert(key, value.clone());
         }
 
-        // Sending new request to worker
+        println!("sending new request to worker: {}", new_address);
         let client_stream = TcpStream::connect(new_address).await?;
         let io = TokioIo::new(client_stream);
         let (mut sender, conn) = http1::handshake(io).await?;
@@ -76,30 +85,79 @@ impl LoadBalancer {
     }
 
     async fn get_worker(&mut self) -> Result<String, LoadBalancerError> {
-        // round-robin algo for selecting active worker
-        let cur_worker = self.current_worker;
-        let round_robin_sql = format!("(({cur_worker} - 1) % (select count(*) from {DF_TABLE_NAME})) + 1");
-        let df = self.ctx.sql(&format!("select id, worker_name, port_name from {DF_TABLE_NAME} where id = {round_robin_sql}"))
-            .await
-            .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
-        let workers = Worker::to_records(df)
-            .await
-            .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
-        let worker = workers.get(0)
-            .wrap_err("workers is empty")
-            .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
-        let worker_name = worker.name.clone()
-            .wrap_err("worker name is empty")
-            .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
-        let worker_port = worker.port.clone()
-            .wrap_err("worker port is empty")
-            .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
-        let worker = format!("http://{}:{}", worker_name, worker_port);
-        if !validate_address(&worker)? {
-            return Err(LoadBalancerError::InvalidWorkerHostAddress);
-        }
-        self.current_worker += 1;
+        match self.algorithm {
+            Algorithm::RoundRobin => {
+                let cur_worker = self.current_worker;
+                let round_robin_sql = format!("(({cur_worker} - 1) % (select count(*) from {DF_TABLE_NAME})) + 1");
+                let df = self.ctx
+                    .sql(&format!("select id, worker_name, port_name, count_cons 
+                                 from {DF_TABLE_NAME} 
+                                 where id = {round_robin_sql}"))
+                    .await
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+                let workers = Worker::to_records(df)
+                    .await
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+                let worker = workers.get(0)
+                    .wrap_err("workers is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_name = worker.name.clone()
+                    .wrap_err("worker name is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_port = worker.port.clone()
+                    .wrap_err("worker port is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_url = format!("http://{}:{}", worker_name, worker_port);
+                if !validate_address(&worker_url)? {
+                    return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                }
+                self.current_worker += 1;
+        
+                Ok(worker_url)
+            },
+            Algorithm::LeastConnections => {
+                let sql = format!("select id, worker_name, port_name, count_cons
+                                            from {DF_TABLE_NAME} 
+                                            where count_cons = (select min(count_cons) from {DF_TABLE_NAME})");
+                let df = self.ctx
+                    .sql(&sql)
+                    .await
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+                let workers = Worker::to_records(df)
+                    .await
+                    .wrap_err("error when parsing to records")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+                let worker = workers.get(0)
+                    .wrap_err("workers is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_name = worker.name.clone()
+                    .wrap_err("worker name is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_port = worker.port.clone()
+                    .wrap_err("worker port is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_id = worker.id
+                    .wrap_err("worker port is empty")
+                    .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+                let worker_url = format!("http://{}:{}", worker_name, worker_port);
+                if !validate_address(&worker_url)? {
+                    return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                }
 
-        Ok(worker)
+                // updating count_cons column and register new table 
+                let sql = format!("select id, worker_name, port_name, 
+                                            case
+                                                when id = {worker_id} then count_cons + 1
+                                                else count_cons
+                                            end as count_cons
+                                            from {DF_TABLE_NAME}");
+                let df = self.ctx.sql(&sql).await?;
+                self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
+                df_to_table(self.ctx.clone(), df, DF_TABLE_NAME).await?;
+                // self.ctx.sql(&format!("select * from {DF_TABLE_NAME}")).await?.show().await?; // debug updated col count_cons
+
+                Ok(worker_url)
+            }
+        }
     }
 }

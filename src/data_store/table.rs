@@ -4,6 +4,7 @@ use chrono::NaiveDateTime;
 use datafusion::arrow::array::{BooleanArray, Int64Array, RecordBatch, StringArray};
 use datafusion::prelude::*;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::scalar::ScalarValue;
 use serde_json::Value;
 use serde::{Deserialize, Serialize};
 
@@ -92,6 +93,7 @@ impl Table {
             return Err(DataStoreError::EmptyDataframeError);
         }
         let df = Self::to_df(ctx, &mut records)?;
+        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // add count connections column with 0
 
         Ok(df)
     }
