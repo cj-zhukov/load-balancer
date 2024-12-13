@@ -11,6 +11,7 @@ use load_balancer::{
     data_store::Table, 
     domain::Database, 
     handler, 
+    load_balancer::Algorithm, 
     service::{PostgresDb, SqliteDb}, 
     utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, MAX_DB_CONS, PG_DATABASE_URL, SQLITE_DATABASE_URL}, 
     LoadBalancer 
@@ -25,11 +26,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .with_max_cons(MAX_DB_CONS)
         .build()
         .await?;
-    // let db = SqliteDb::builder()
-    //     .with_url(SQLITE_DATABASE_URL.expose_secret())
-    //     .with_max_cons(MAX_DB_CONS)
-    //     .build()
-    //     .await?;
     db.run_migrations().await?;
     let db_ref = Arc::new(RwLock::new(db));
 
@@ -38,7 +34,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
 
     let load_balancer = Arc::new(RwLock::new(
-        LoadBalancer::new(ctx, Some(1)).expect("failed to create load balancer"),
+        LoadBalancer::new(ctx, Some(1), Some(Algorithm::LeastConnections))
+            .expect("failed to create load balancer"),
     ));
 
     let addr = LOAD_BALANCER_ADDRESS_SECRET.parse::<SocketAddr>()?;
