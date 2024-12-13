@@ -1,5 +1,4 @@
 use std::str::FromStr;
-use std::sync::Arc;
 
 use color_eyre::eyre::{Context, ContextCompat};
 use datafusion::prelude::*;
@@ -10,32 +9,37 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
-use tokio::sync::RwLock;
 
 use crate::data_store::Worker;
 use crate::utils::{df_to_table, validate_address, DF_TABLE_NAME};
 use crate::BoxBody;
 use crate::error::LoadBalancerError;
 
-// load balancer now holds ctx with registered table with worker hosts information
+#[derive(Default)]
 pub struct LoadBalancer {
     pub ctx: SessionContext,
     pub current_worker: usize,
     pub algorithm: Algorithm,
 }
 
+#[derive(Default)]
 pub enum Algorithm {
+    #[default]
     RoundRobin, // Distribute requests evenly across all worker servers
     LeastConnections, // Route requests to the worker server with the least active connections.
 }
 
 impl LoadBalancer {
-    pub fn new(ctx: SessionContext, current_worker: Option<usize>, algorithm: Option<Algorithm>) -> Result<Self, LoadBalancerError> {
+    pub fn new(ctx: SessionContext, current_worker: usize) -> Result<Self, LoadBalancerError> {
         Ok(LoadBalancer {
             ctx,
-            current_worker: current_worker.unwrap_or(0),
-            algorithm: algorithm.unwrap_or(Algorithm::RoundRobin),
+            current_worker,
+            ..Default::default()
         })
+    }
+
+    pub fn with_algorithm(&mut self, algorithm: Algorithm) {
+        self.algorithm = algorithm
     }
 
     pub async fn forward_request(&mut self, req: Request<Incoming>) -> Result<Response<BoxBody>, LoadBalancerError> {
