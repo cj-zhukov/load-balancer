@@ -30,12 +30,12 @@ pub enum Algorithm {
 }
 
 impl LoadBalancer {
-    pub fn new(ctx: SessionContext, current_worker: usize) -> Result<Self, LoadBalancerError> {
-        Ok(LoadBalancer {
+    pub fn new(ctx: SessionContext, current_worker: usize) -> Self {
+        LoadBalancer {
             ctx,
             current_worker,
             ..Default::default()
-        })
+        }
     }
 
     pub fn with_algorithm(&mut self, algorithm: Algorithm) {

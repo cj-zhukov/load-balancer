@@ -32,10 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
     df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
 
-    let load_balancer = Arc::new(RwLock::new(
-        LoadBalancer::new(ctx, 1)
-            .expect("failed to create load balancer"),
-    ));
+    let load_balancer = Arc::new(RwLock::new(LoadBalancer::new(ctx, 1)));
 
     let addr = LOAD_BALANCER_ADDRESS_SECRET.parse::<SocketAddr>()?;
     let listener = TcpListener::bind(addr).await?;
