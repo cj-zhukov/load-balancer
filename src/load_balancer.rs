@@ -29,7 +29,8 @@ pub struct LoadBalancer {
 pub enum Algorithm {
     #[default]
     RoundRobin, // Distribute requests evenly across all worker servers
-    LeastConnections, // Route requests to the worker server with the least active connections.
+    LeastConnections, // Route requests to the worker server with the least active connections
+    Random, // Route requests to the random worker server
 }
 
 impl LoadBalancer {
@@ -283,6 +284,54 @@ impl LoadBalancer {
                 };
 
                 Ok(res)   
+            },
+
+            Algorithm::Random => {
+                let res = loop {
+                    let sql = format!("select id, worker_name, port_name, count_cons
+                                                from {DF_TABLE_NAME} 
+                                                where 1 = 1 
+                                                and status is true
+                                                order by random()
+                                                limit 1");
+                    let df = self.ctx
+                        .sql(&sql)
+                        .await
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+
+                    let workers = Worker::to_records(df)
+                        .await
+                        .wrap_err("error when parsing to records")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
+
+                    if workers.is_empty() {
+                        return Err(LoadBalancerError::EmptyWorkerHostAddress);
+                    }
+
+                    let worker = workers.get(0)
+                        .wrap_err("workers is empty")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+
+                    let worker_name = worker.name.clone()
+                        .wrap_err("worker name is empty")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+
+                    let worker_port = worker.port.clone()
+                        .wrap_err("worker port is empty")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+
+                    let worker_url = format!("http://{}:{}", worker_name, worker_port);
+                    if !validate_address(&worker_url)? {
+                    return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                    }
+
+                    let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
+                    if alive(worker_url_health).await {
+                        break worker_url;
+                    }
+                };
+                
+                Ok(res)
             }
         }
     }
