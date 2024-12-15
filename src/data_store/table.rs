@@ -8,9 +8,9 @@ use datafusion::scalar::ScalarValue;
 use serde_json::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::Database;
-use crate::utils::{LOAD_BALANCER_NAME, TABLE_NAME};
-use crate::DbRef;
+// use crate::domain::Database;
+// use crate::utils::{LOAD_BALANCER_NAME, TABLE_NAME};
+// use crate::DbRef;
 use super::DataStoreError;
 
 #[derive(Serialize, Deserialize, Debug, sqlx::FromRow)]
@@ -78,7 +78,7 @@ impl Table {
             ],
         )?;
         let df = ctx.read_batch(batch)?;
-        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for col
+        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for this col
 
         Ok(df)
     }

@@ -17,7 +17,7 @@ use error::LoadBalancerError;
 pub use load_balancer::LoadBalancer;
 
 pub type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
-pub type DbRef<Database> = Arc<RwLock<Database>>;
+// pub type DbRef<Database> = Arc<RwLock<Database>>;
 
 pub async fn handler(
     req: Request<Incoming>, 
