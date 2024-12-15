@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // let ctx = SessionContext::new();
     // let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
     // df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
-    
+
     let sql = format!("select * from {} 
                                 where 1 = 1
                                 and server_name = '{}' 
@@ -44,6 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut load_balancer = LoadBalancer::new(ctx, 1);
     load_balancer.with_algorithm(Algorithm::Random);
+    load_balancer.check_workers_health().await?; // #TODO how to periodically check workers status?
     let load_balancer = Arc::new(RwLock::new(load_balancer));
 
     let addr = LOAD_BALANCER_ADDRESS_SECRET.parse::<SocketAddr>()?;

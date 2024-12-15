@@ -55,7 +55,7 @@ impl LoadBalancer {
 
 impl LoadBalancer {
     pub async fn forward_request(&mut self, req: Request<Incoming>) -> Result<Response<BoxBody>, LoadBalancerError> {
-        self.check_workers_health().await?; // check all workers and setup status #TODO move it into init stage
+        // self.check_workers_health().await?; // #TODO forward request must be as fast as possible, what's the correct place of this?
         let mut worker_uri = self.get_worker().await?; // get active worker
 
         if let Some(path_and_query) = req.uri().path_and_query() {
@@ -102,7 +102,7 @@ impl LoadBalancer {
     }
 
     /// Check all workers and setup 'status'
-    async fn check_workers_health(&self) -> Result<(), LoadBalancerError> {
+    pub async fn check_workers_health(&self) -> Result<(), LoadBalancerError> {
         println!("checking worker servers health");
         let workers_df = self.ctx
             .sql(&format!("select id, worker_name, port_name, count_cons from {DF_TABLE_NAME}"))
@@ -166,7 +166,8 @@ impl LoadBalancer {
         Ok(())
     }
 
-    /// Get active worker 
+    /// Get active worker from pool of all potentially active ones. Checks status of this worker 
+    /// with health route, if the worker is not alive, take next one and repeat.
     async fn get_worker(&mut self) -> Result<String, LoadBalancerError> {
         match self.algorithm {
             Algorithm::RoundRobin => {
