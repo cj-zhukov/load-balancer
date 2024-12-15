@@ -5,7 +5,7 @@ use datafusion::prelude::*;
 use datafusion::error::DataFusionError;
 
 /// Register dataframe as table in ctx
-pub async fn df_to_table(ctx: SessionContext, df: DataFrame, table_name: &str) -> Result<(), DataFusionError> {
+pub async fn df_to_table(ctx: &SessionContext, df: DataFrame, table_name: &str) -> Result<(), DataFusionError> {
     let schema = df.clone().schema().as_arrow().clone();
     let batches = df.collect().await?;
     let mem_table = MemTable::try_new(Arc::new(schema), vec![batches])?;
@@ -47,7 +47,7 @@ mod tests {
 
         let ctx = SessionContext::new();
         let df = ctx.read_batch(batch).unwrap();
-        df_to_table(ctx.clone(), df, "t").await.unwrap();
+        df_to_table(&ctx, df, "t").await.unwrap();
         let res = ctx.sql("select * from t order by id").await.unwrap();
         assert_batches_eq!(
             &[

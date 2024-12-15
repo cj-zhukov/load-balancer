@@ -39,7 +39,7 @@ impl Table {
 }
 
 impl Table {
-    fn to_df(ctx: SessionContext, records: &mut Vec<Self>) -> Result<DataFrame, DataStoreError> {
+    pub fn to_df(ctx: &SessionContext, records: &mut Vec<Self>) -> Result<DataFrame, DataStoreError> {
         let mut ids = Vec::new();
         let mut server_names = Vec::new();
         let mut worker_names = Vec::new();
@@ -78,24 +78,28 @@ impl Table {
             ],
         )?;
         let df = ctx.read_batch(batch)?;
+        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for col
 
         Ok(df)
     }
 
-    pub async fn init_table<T>(ctx: SessionContext, db_ref: DbRef<T>) -> Result<DataFrame, DataStoreError> 
-    where
-        T: Database + Send + Sync,
-    {
-        let sql = format!("select * from {} where server_name = '{}' and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
-        let db_con = db_ref.read().await;
-        let mut records = db_con.fetch_data(&sql).await?;
-        if records.is_empty() {
-            return Err(DataStoreError::EmptyDataframeError);
-        }
-        let df = Self::to_df(ctx, &mut records)?;
-        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // add count connections column with 0
+    // pub async fn init_table<T>(ctx: SessionContext, db_ref: DbRef<T>) -> Result<DataFrame, DataStoreError> 
+    // where
+    //     T: Database + Send + Sync,
+    // {
+    //     let sql = format!("select * from {} 
+    //                                 where 1 = 1
+    //                                 and server_name = '{}' 
+    //                                 and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
+    //     let db_con = db_ref.read().await;
+    //     let mut records = db_con.fetch_data(&sql).await?;
+    //     if records.is_empty() {
+    //         return Err(DataStoreError::EmptyDataframeError);
+    //     }
+    //     let df = Self::to_df(ctx, &mut records)?;
+    //     let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // add count connections column with 0
 
-        Ok(df)
-    }
+    //     Ok(df)
+    // }
 }
 

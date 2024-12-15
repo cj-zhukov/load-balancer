@@ -161,7 +161,7 @@ impl LoadBalancer {
             .join(workers_status, JoinType::Inner, &["id"], &["id2"], None)?
             .drop_columns(&["id2"])?;
         self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
-        df_to_table(self.ctx.clone(), active_workers, DF_TABLE_NAME).await?;
+        df_to_table(&self.ctx, active_workers, DF_TABLE_NAME).await?;
 
         Ok(())
     }
@@ -174,10 +174,10 @@ impl LoadBalancer {
                 let round_robin_sql = format!("(({cur_worker} - 1) % (select count(*) from {DF_TABLE_NAME})) + 1");
                 let df = self.ctx
                     .sql(&format!("select id, worker_name, port_name, count_cons 
-                                 from {DF_TABLE_NAME} 
-                                 where 1 = 1 
-                                 and status is true
-                                 and id = {round_robin_sql}"))
+                                    from {DF_TABLE_NAME} 
+                                    where 1 = 1 
+                                    and status is true
+                                    and id = {round_robin_sql}"))
                     .await
                     .map_err(|e| LoadBalancerError::UnexpectedError(e.into()))?;
 
@@ -276,7 +276,7 @@ impl LoadBalancer {
                                                     from {DF_TABLE_NAME}");
                         let df = self.ctx.sql(&sql).await?;
                         self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
-                        df_to_table(self.ctx.clone(), df, DF_TABLE_NAME).await?;
+                        df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
                         break worker_url;
                     }
 

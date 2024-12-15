@@ -8,7 +8,13 @@ use tokio::{net::TcpListener, sync::RwLock};
 use hyper::server::conn::http1;
 
 use load_balancer::{
-    data_store::Table, domain::Database, handler, load_balancer::Algorithm, service::{PostgresDb, SqliteDb}, utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, MAX_DB_CONS, PG_DATABASE_URL, SQLITE_DATABASE_URL}, LoadBalancer 
+    data_store::Table, 
+    domain::Database, 
+    handler, 
+    load_balancer::Algorithm, 
+    service::{PostgresDb, SqliteDb}, 
+    utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, MAX_DB_CONS, PG_DATABASE_URL, SQLITE_DATABASE_URL, TABLE_NAME}, 
+    LoadBalancer 
 };
 
 #[tokio::main]
@@ -21,11 +27,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .build()
         .await?;
     db.run_migrations().await?;
-    let db_ref = Arc::new(RwLock::new(db));
 
+    // let db_ref = Arc::new(RwLock::new(db));
+    // let ctx = SessionContext::new();
+    // let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
+    // df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
+    
+    let sql = format!("select * from {} 
+                                where 1 = 1
+                                and server_name = '{}' 
+                                and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
+    let mut records = db.fetch_data(&sql).await?;
     let ctx = SessionContext::new();
-    let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
-    df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
+    let workers = Table::to_df(&ctx, &mut records)?;
+    df_to_table(&ctx, workers, DF_TABLE_NAME).await?; 
 
     let mut load_balancer = LoadBalancer::new(ctx, 1);
     load_balancer.with_algorithm(Algorithm::Random);
