@@ -33,10 +33,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
     // df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
 
-    let sql = format!("select * from {} 
+    let sql = format!("select * from {TABLE_NAME} 
                                 where 1 = 1
-                                and server_name = '{}' 
-                                and active is true", TABLE_NAME, LOAD_BALANCER_NAME);
+                                and server_name = '{LOAD_BALANCER_NAME}' 
+                                and active is true");
     let mut records = db.fetch_data(&sql).await?;
     let ctx = SessionContext::new();
     let workers = Table::to_df(&ctx, &mut records)?;

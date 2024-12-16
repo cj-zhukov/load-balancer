@@ -1,11 +1,12 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use color_eyre::eyre::{Context, ContextCompat};
 use datafusion::arrow::array::{BooleanArray, Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::prelude::*;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Empty};
 use hyper::{
     client::conn::http1,
     body::Incoming, Request, Response, Uri
@@ -114,7 +115,7 @@ impl LoadBalancer {
         let mut tasks = vec![];
         for worker in workers {
             let worker_id = worker.id
-                .wrap_err("worker port is empty")
+                .wrap_err("worker id is empty")
                 .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
             let worker_name = worker.name.clone()
                 .wrap_err("worker name is empty")
@@ -127,6 +128,7 @@ impl LoadBalancer {
                 return Err(LoadBalancerError::InvalidWorkerHostAddress);
             }
             let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
+            let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
             let task = tokio::spawn(check_health(worker_id, worker_url_health));
             tasks.push(task);
         }
@@ -134,7 +136,7 @@ impl LoadBalancer {
         let mut ids = vec![];
         let mut statuses = vec![];
         for task in tasks {
-            match task.await {
+            match task.await.map_err(|e| LoadBalancerError::UnexpectedError(e.into()))? {
                 Ok(res) => {
                     ids.push(res.0);
                     statuses.push(res.1);
@@ -211,9 +213,12 @@ impl LoadBalancer {
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    if alive(worker_url_health).await {
+                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
+                    if alive(worker_url_health).await? {
                         self.current_worker += 1;
                         break worker_url;
+                    } else {
+                        eprintln!("worker server is not alive: {worker_url}");
                     }
 
                     idx += 1;
@@ -267,7 +272,8 @@ impl LoadBalancer {
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    if alive(worker_url_health).await {
+                    let worker_url_health = Uri::from_str(&worker_url_health)?;
+                    if alive(worker_url_health).await? {
                         // updating count_cons column and register new table 
                         let sql = format!("select id, worker_name, port_name, 
                                                     case
@@ -279,6 +285,8 @@ impl LoadBalancer {
                         self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
                         df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
                         break worker_url;
+                    } else {
+                        eprintln!("worker server is not alive: {worker_url}");
                     }
 
                     idx += 1;
@@ -327,8 +335,11 @@ impl LoadBalancer {
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    if alive(worker_url_health).await {
+                    let worker_url_health = Uri::from_str(&worker_url_health)?;
+                    if alive(worker_url_health).await? {
                         break worker_url;
+                    } else {
+                        eprintln!("worker server is not alive: {worker_url}");
                     }
                 };
                 
@@ -338,40 +349,120 @@ impl LoadBalancer {
     }
 }
 
-pub async fn alive(url: String) -> bool {
-    let client = reqwest::Client::new();
+// pub async fn alive(url: String) -> bool {
+//     let client = reqwest::Client::new();
 
-    client.get(url)
-        .send()
-        .await
-        .ok()
-        .map(|response| {
-            let res = match response.status().as_u16() {
-                200 => true,
-                _ => false
-            };
-            Some(res)
-        })
-        .flatten()
-        .unwrap_or(false)
+//     client.get(url)
+//         .send()
+//         .await
+//         .ok()
+//         .map(|response| {
+//             let res = match response.status().as_u16() {
+//                 200 => true,
+//                 _ => false
+//             };
+//             Some(res)
+//         })
+//         .flatten()
+//         .unwrap_or(false)
+// }
+
+pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
+    let host = url.host()
+        .wrap_err(format!("failed getting host for url: {url}"))
+        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+    let port = url.port_u16()
+        .wrap_err(format!("failed getting port for url: {url}"))
+        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+    let addr = format!("{}:{}", host, port);
+
+    match TcpStream::connect(addr).await {
+        Err(_) => Ok(false),
+        Ok(stream) => {
+            let io = TokioIo::new(stream);
+            let (mut sender, conn) = http1::handshake(io).await?;
+            tokio::task::spawn(async move {
+                if let Err(err) = conn.await {
+                    eprintln!("Connection failed: {:?}", err);
+                }
+            });            
+        
+            let authority = url.authority()
+                .wrap_err(format!("failed getting authority for url: {url}"))
+                .map_err(|e| LoadBalancerError::UnexpectedError(e))?
+                .clone();
+        
+            let req = Request::builder()
+                .uri(url)
+                .header(hyper::header::HOST, authority.as_str())
+                .body(Empty::<Bytes>::new())?;
+        
+            let response = sender.send_request(req).await?;
+            if response.status().as_u16() == 200 {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+    }
 }
 
-pub async fn check_health(id: i64, url: String) -> (i64, bool) {
-    let client = reqwest::Client::new();
+// pub async fn check_health(id: i64, url: String) -> (i64, bool) {
+//     let client = reqwest::Client::new();
 
-    let status = client.get(url)
-        .send()
-        .await
-        .ok()
-        .map(|response| {
-            let res = match response.status().as_u16() {
-                200 => true,
-                _ => false
-            };
-            Some(res)
-        })
-        .flatten()
-        .unwrap_or(false);
+//     let status = client.get(url)
+//         .send()
+//         .await
+//         .ok()
+//         .map(|response| {
+//             let res = match response.status().as_u16() {
+//                 200 => true,
+//                 _ => false
+//             };
+//             Some(res)
+//         })
+//         .flatten()
+//         .unwrap_or(false);
 
-    (id, status)
+//     (id, status)
+// }
+
+pub async fn check_health(id: i64, url: Uri) -> Result<(i64, bool), LoadBalancerError> {
+    let host = url.host()
+        .wrap_err(format!("failed getting host for url: {url}"))
+        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+    let port = url.port_u16()
+        .wrap_err(format!("failed getting port for url: {url}"))
+        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
+    let addr = format!("{}:{}", host, port);
+
+    match TcpStream::connect(addr).await {
+        Err(_) => Ok((id, false)),
+        Ok(stream) => {
+            let io = TokioIo::new(stream);
+            let (mut sender, conn) = http1::handshake(io).await?;
+            tokio::task::spawn(async move {
+                if let Err(err) = conn.await {
+                    eprintln!("Connection failed: {:?}", err);
+                }
+            });            
+        
+            let authority = url.authority()
+                .wrap_err(format!("failed getting authority for url: {url}"))
+                .map_err(|e| LoadBalancerError::UnexpectedError(e))?
+                .clone();
+        
+            let req = Request::builder()
+                .uri(url)
+                .header(hyper::header::HOST, authority.as_str())
+                .body(Empty::<Bytes>::new())?;
+        
+            let response = sender.send_request(req).await?;
+            if response.status().as_u16() == 200 {
+                Ok((id, true))
+            } else {
+                Ok((id, false))
+            }
+        }
+    }
 }
