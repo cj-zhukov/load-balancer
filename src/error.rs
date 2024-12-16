@@ -7,7 +7,6 @@ use hyper::http::uri::InvalidUri;
 use hyper::Error as HyperError;
 use std::io::Error as IoError;
 use regex::Error as RegexError;
-use reqwest::Error as ReqwestError;
 
 #[derive(Debug, Error)]
 pub enum LoadBalancerError {
@@ -43,9 +42,6 @@ pub enum LoadBalancerError {
 
     #[error("Regex error")]
     RegexError(#[from] RegexError),
-
-    #[error("Reqwest error")]
-    ReqwestError(#[from] ReqwestError),
     
     #[error("Unexpected error")]
     UnexpectedError(#[source] Report),
