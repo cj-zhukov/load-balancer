@@ -15,7 +15,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
 use crate::data_store::Worker;
-use crate::utils::{df_to_table, validate_address, DF_TABLE_NAME, HEALTH_ROUTE};
+use crate::utils::{df_to_table, DF_TABLE_NAME, HEALTH_ROUTE};
 use crate::BoxBody;
 use crate::error::LoadBalancerError;
 
@@ -57,7 +57,7 @@ impl LoadBalancer {
 impl LoadBalancer {
     pub async fn forward_request(&mut self, req: Request<Incoming>) -> Result<Response<BoxBody>, LoadBalancerError> {
         // self.check_workers_health().await?; // #TODO forward request must be as fast as possible, what's the correct place of this?
-        let mut worker_uri = self.get_worker().await?; // get active worker
+        let mut worker_uri = self.get_worker().await?; // get active worker #TODO maybe instead of String, return valid uri?
 
         if let Some(path_and_query) = req.uri().path_and_query() {
             worker_uri.push_str(path_and_query.as_str());
@@ -124,12 +124,12 @@ impl LoadBalancer {
                 .wrap_err("worker port is empty")
                 .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
             let worker_url = format!("http://{}:{}", worker_name, worker_port);
-            if !validate_address(&worker_url)? {
-                return Err(LoadBalancerError::InvalidWorkerHostAddress);
+            if let Err(e) = worker_url.parse::<Uri>() {
+                return Err(LoadBalancerError::InvalidUri(e));
             }
             let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
             let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-            let task = tokio::spawn(check_health(worker_id, worker_url_health));
+            let task = tokio::spawn(check_health(worker_id, worker_url_health)); // #TODO use closer here
             tasks.push(task);
         }
 
@@ -141,7 +141,7 @@ impl LoadBalancer {
                     ids.push(res.0);
                     statuses.push(res.1);
                 },
-                Err(e) => eprintln!("Failed running worker activity status: {e}")
+                Err(e) => eprintln!("failed checking worker activity status: {e}")
             };
         }
         let schema = Schema::new(vec![
@@ -208,8 +208,8 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if !validate_address(&worker_url)? {
-                        return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                    if let Err(e) = worker_url.parse::<Uri>() {
+                        return Err(LoadBalancerError::InvalidUri(e));
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
@@ -267,12 +267,12 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if !validate_address(&worker_url)? {
-                        return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                    if let Err(e) = worker_url.parse::<Uri>() {
+                        return Err(LoadBalancerError::InvalidUri(e));
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    let worker_url_health = Uri::from_str(&worker_url_health)?;
+                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
                     if alive(worker_url_health).await? {
                         // updating count_cons column and register new table 
                         let sql = format!("select id, worker_name, port_name, 
@@ -330,12 +330,12 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if !validate_address(&worker_url)? {
-                    return Err(LoadBalancerError::InvalidWorkerHostAddress);
+                    if let Err(e) = worker_url.parse::<Uri>() {
+                        return Err(LoadBalancerError::InvalidUri(e));
                     }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    let worker_url_health = Uri::from_str(&worker_url_health)?;
+                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
                     if alive(worker_url_health).await? {
                         break worker_url;
                     } else {
@@ -348,24 +348,6 @@ impl LoadBalancer {
         }
     }
 }
-
-// pub async fn alive(url: String) -> bool {
-//     let client = reqwest::Client::new();
-
-//     client.get(url)
-//         .send()
-//         .await
-//         .ok()
-//         .map(|response| {
-//             let res = match response.status().as_u16() {
-//                 200 => true,
-//                 _ => false
-//             };
-//             Some(res)
-//         })
-//         .flatten()
-//         .unwrap_or(false)
-// }
 
 pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
     let host = url.host()
@@ -406,26 +388,6 @@ pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
         }
     }
 }
-
-// pub async fn check_health(id: i64, url: String) -> (i64, bool) {
-//     let client = reqwest::Client::new();
-
-//     let status = client.get(url)
-//         .send()
-//         .await
-//         .ok()
-//         .map(|response| {
-//             let res = match response.status().as_u16() {
-//                 200 => true,
-//                 _ => false
-//             };
-//             Some(res)
-//         })
-//         .flatten()
-//         .unwrap_or(false);
-
-//     (id, status)
-// }
 
 pub async fn check_health(id: i64, url: Uri) -> Result<(i64, bool), LoadBalancerError> {
     let host = url.host()
