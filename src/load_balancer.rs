@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use color_eyre::eyre::{Context, ContextCompat};
-use datafusion::arrow::array::{BooleanArray, Int64Array, RecordBatch};
+use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::prelude::*;
 use http_body_util::{BodyExt, Empty};
@@ -114,9 +114,6 @@ impl LoadBalancer {
 
         let mut tasks = vec![];
         for worker in workers {
-            let worker_id = worker.id
-                .wrap_err("worker id is empty")
-                .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
             let worker_name = worker.name.clone()
                 .wrap_err("worker name is empty")
                 .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
@@ -129,39 +126,55 @@ impl LoadBalancer {
             }
             let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
             let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-            let task = tokio::spawn(check_health(worker_id, worker_url_health)); // #TODO use closer here
+            let task = tokio::spawn(alive(worker_url_health));
             tasks.push(task);
         }
 
-        let mut ids = vec![];
+        let mut worker_names = vec![];
+        let mut worker_ports = vec![];
         let mut statuses = vec![];
         for task in tasks {
             match task.await.map_err(|e| LoadBalancerError::UnexpectedError(e.into()))? {
                 Ok(res) => {
-                    ids.push(res.0);
+                    let worker_name = res.0
+                        .host()                
+                        .wrap_err("worker name is empty")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e))?
+                        .to_string();
+                    let worker_port = res.0
+                        .port()
+                        .wrap_err("worker port is empty")
+                        .map_err(|e| LoadBalancerError::UnexpectedError(e))?
+                        .to_string();
+
+                    worker_names.push(worker_name);
+                    worker_ports.push(worker_port);
                     statuses.push(res.1);
                 },
                 Err(e) => eprintln!("failed checking worker activity status: {e}")
             };
         }
         let schema = Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
+            Field::new("worker_name", DataType::Utf8, false),
+            Field::new("port_name", DataType::Utf8, true),
             Field::new("status", DataType::Boolean, true),
         ]);
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
-                Arc::new(Int64Array::from(ids)),
+                Arc::new(StringArray::from(worker_names)),
+                Arc::new(StringArray::from(worker_ports)),
                 Arc::new(BooleanArray::from(statuses)),
             ],
         )?;
         let workers_status = self.ctx
             .read_batch(batch)?
-            .with_column_renamed("id", "id2")?;
+            .with_column_renamed("worker_name", "worker_name2")?
+            .with_column_renamed("port_name", "port_name2")?;
 
         let active_workers = workers_df
-            .join(workers_status, JoinType::Inner, &["id"], &["id2"], None)?
-            .drop_columns(&["id2"])?;
+            .join(workers_status, JoinType::Inner, &["worker_name", "port_name"], &["worker_name2", "port_name2"], None)?
+            .drop_columns(&["worker_name2", "port_name2"])?;
         self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
         df_to_table(&self.ctx, active_workers, DF_TABLE_NAME).await?;
 
@@ -214,14 +227,16 @@ impl LoadBalancer {
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    if alive(worker_url_health).await? {
-                        self.current_worker += 1;
-                        break worker_url;
-                    } else {
-                        eprintln!("worker server is not alive: {worker_url}");
+                    match alive(worker_url_health).await? {
+                        (_url, true) => {
+                            self.current_worker += 1;
+                            break worker_url;
+                        },
+                        (_url, false) => {
+                            eprintln!("worker server is not alive: {worker_url}");
+                            idx += 1;
+                        },
                     }
-
-                    idx += 1;
                 };
 
                 Ok(res)
@@ -263,7 +278,7 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_id = worker.id
-                        .wrap_err("worker port is empty")
+                        .wrap_err("worker_id port is empty")
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
@@ -273,23 +288,26 @@ impl LoadBalancer {
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    if alive(worker_url_health).await? {
-                        // updating count_cons column and register new table 
-                        let sql = format!("select id, worker_name, port_name, 
-                                                    case
-                                                        when id = {worker_id} then count_cons + 1
-                                                        else count_cons
-                                                    end as count_cons
-                                                    from {DF_TABLE_NAME}");
-                        let df = self.ctx.sql(&sql).await?;
-                        self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
-                        df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
-                        break worker_url;
-                    } else {
-                        eprintln!("worker server is not alive: {worker_url}");
+                    match alive(worker_url_health).await? {
+                        (_url, true) => {
+                            // updating count_cons column and register new table 
+                            let sql = format!("select id, worker_name, port_name,
+                                                        case
+                                                            when id = {worker_id} then count_cons + 1
+                                                            else count_cons
+                                                        end as count_cons,
+                                                        status
+                                                        from {DF_TABLE_NAME}");
+                            let df = self.ctx.sql(&sql).await?;
+                            self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
+                            df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
+                            break worker_url;
+                        },
+                        (_url, false) => {
+                            eprintln!("worker server is not alive: {worker_url}");
+                            idx += 1;
+                        },
                     }
-
-                    idx += 1;
                 };
 
                 Ok(res)   
@@ -336,10 +354,9 @@ impl LoadBalancer {
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    if alive(worker_url_health).await? {
-                        break worker_url;
-                    } else {
-                        eprintln!("worker server is not alive: {worker_url}");
+                    match alive(worker_url_health).await? {
+                        (_url, true) => break worker_url,
+                        (_url, false) => eprintln!("worker server is not alive: {worker_url}"),
                     }
                 };
                 
@@ -349,7 +366,7 @@ impl LoadBalancer {
     }
 }
 
-pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
+async fn alive(url: Uri) -> Result<(Uri, bool), LoadBalancerError> {
     let host = url.host()
         .wrap_err(format!("failed getting host for url: {url}"))
         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
@@ -359,7 +376,7 @@ pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
     let addr = format!("{}:{}", host, port);
 
     match TcpStream::connect(addr).await {
-        Err(_) => Ok(false),
+        Err(_) => Ok((url, false)),
         Ok(stream) => {
             let io = TokioIo::new(stream);
             let (mut sender, conn) = http1::handshake(io).await?;
@@ -375,55 +392,15 @@ pub async fn alive(url: Uri) -> Result<bool, LoadBalancerError> {
                 .clone();
         
             let req = Request::builder()
-                .uri(url)
+                .uri(&url)
                 .header(hyper::header::HOST, authority.as_str())
                 .body(Empty::<Bytes>::new())?;
         
             let response = sender.send_request(req).await?;
             if response.status().as_u16() == 200 {
-                Ok(true)
+                Ok((url, true))
             } else {
-                Ok(false)
-            }
-        }
-    }
-}
-
-pub async fn check_health(id: i64, url: Uri) -> Result<(i64, bool), LoadBalancerError> {
-    let host = url.host()
-        .wrap_err(format!("failed getting host for url: {url}"))
-        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
-    let port = url.port_u16()
-        .wrap_err(format!("failed getting port for url: {url}"))
-        .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
-    let addr = format!("{}:{}", host, port);
-
-    match TcpStream::connect(addr).await {
-        Err(_) => Ok((id, false)),
-        Ok(stream) => {
-            let io = TokioIo::new(stream);
-            let (mut sender, conn) = http1::handshake(io).await?;
-            tokio::task::spawn(async move {
-                if let Err(err) = conn.await {
-                    eprintln!("Connection failed: {:?}", err);
-                }
-            });            
-        
-            let authority = url.authority()
-                .wrap_err(format!("failed getting authority for url: {url}"))
-                .map_err(|e| LoadBalancerError::UnexpectedError(e))?
-                .clone();
-        
-            let req = Request::builder()
-                .uri(url)
-                .header(hyper::header::HOST, authority.as_str())
-                .body(Empty::<Bytes>::new())?;
-        
-            let response = sender.send_request(req).await?;
-            if response.status().as_u16() == 200 {
-                Ok((id, true))
-            } else {
-                Ok((id, false))
+                Ok((url, false))
             }
         }
     }
