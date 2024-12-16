@@ -28,11 +28,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
     db.run_migrations().await?;
 
-    // let db_ref = Arc::new(RwLock::new(db));
-    // let ctx = SessionContext::new();
-    // let worker_hosts = Table::init_table(ctx.clone(), db_ref).await?; // fetch and store worker hosts as df
-    // df_to_table(ctx.clone(), worker_hosts.clone(), DF_TABLE_NAME).await?; // register table in ctx
-
     let sql = format!("select * from {TABLE_NAME} 
                                 where 1 = 1
                                 and server_name = '{LOAD_BALANCER_NAME}' 
