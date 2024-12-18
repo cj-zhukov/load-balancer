@@ -38,8 +38,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     df_to_table(&ctx, workers, DF_TABLE_NAME).await?; 
 
     let mut load_balancer = LoadBalancer::new(ctx, 1);
-    load_balancer.with_algorithm(Algorithm::LeastConnections);
-    load_balancer.check_workers_health().await?; // #TODO how to periodically check workers status?
+    load_balancer.with_algorithm(Algorithm::Random);
+    load_balancer.check_workers_health().await?;
     let load_balancer = Arc::new(RwLock::new(load_balancer));
 
     let addr = LOAD_BALANCER_ADDRESS_SECRET.parse::<SocketAddr>()?;

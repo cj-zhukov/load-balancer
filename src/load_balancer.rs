@@ -56,14 +56,11 @@ impl LoadBalancer {
 
 impl LoadBalancer {
     pub async fn forward_request(&mut self, req: Request<Incoming>) -> Result<Response<BoxBody>, LoadBalancerError> {
-        // self.check_workers_health().await?; // #TODO forward request must be as fast as possible, what's the correct place of this?
-        let mut worker_uri = self.get_worker().await?; // get active worker #TODO maybe instead of String, return valid uri?
+        let worker_uri = self.get_worker().await?; 
+        let mut parts = worker_uri.into_parts();
+        parts.path_and_query = req.uri().path_and_query().cloned();
 
-        if let Some(path_and_query) = req.uri().path_and_query() {
-            worker_uri.push_str(path_and_query.as_str());
-        }
-
-        let new_uri = Uri::from_str(&worker_uri).map_err(LoadBalancerError::InvalidUri)?;
+        let new_uri = Uri::from_parts(parts).map_err(LoadBalancerError::InvalidUriParts)?;
         let new_host = new_uri
             .host()
             .wrap_err(format!("failed parsing uri: {new_uri} to get host"))
@@ -121,9 +118,7 @@ impl LoadBalancer {
                 .wrap_err("worker port is empty")
                 .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
             let worker_url = format!("http://{}:{}", worker_name, worker_port);
-            if let Err(e) = worker_url.parse::<Uri>() {
-                return Err(LoadBalancerError::InvalidUri(e));
-            }
+            let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
             let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
             let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
             let task = tokio::spawn(alive(worker_url_health));
@@ -151,7 +146,10 @@ impl LoadBalancer {
                     worker_ports.push(worker_port);
                     statuses.push(res.1);
                 },
-                Err(e) => eprintln!("failed checking worker activity status: {e}")
+                Err(e) => { 
+                    eprintln!("failed checking worker activity status: {e}");
+                    return Err(e);
+                }
             };
         }
         let schema = Schema::new(vec![
@@ -183,7 +181,7 @@ impl LoadBalancer {
 
     /// Get active worker from pool of all potentially active ones. Checks status of this worker 
     /// with health route, if the worker is not alive, take next one and repeat.
-    async fn get_worker(&mut self) -> Result<String, LoadBalancerError> {
+    async fn get_worker(&mut self) -> Result<Uri, LoadBalancerError> {
         match self.algorithm {
             Algorithm::RoundRobin => {
                 let cur_worker = self.current_worker;
@@ -221,9 +219,10 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if let Err(e) = worker_url.parse::<Uri>() {
-                        return Err(LoadBalancerError::InvalidUri(e));
-                    }
+                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
+                    // if let Err(e) = worker_url.parse::<Uri>() {
+                    //     return Err(LoadBalancerError::InvalidUri(e));
+                    // }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
@@ -282,9 +281,10 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if let Err(e) = worker_url.parse::<Uri>() {
-                        return Err(LoadBalancerError::InvalidUri(e));
-                    }
+                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
+                    // if let Err(e) = worker_url.parse::<Uri>() {
+                    //     return Err(LoadBalancerError::InvalidUri(e));
+                    // }
 
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
@@ -348,10 +348,7 @@ impl LoadBalancer {
                         .map_err(|e| LoadBalancerError::UnexpectedError(e))?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    if let Err(e) = worker_url.parse::<Uri>() {
-                        return Err(LoadBalancerError::InvalidUri(e));
-                    }
-
+                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
                     match alive(worker_url_health).await? {

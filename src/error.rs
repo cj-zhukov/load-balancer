@@ -4,6 +4,7 @@ use datafusion::error::DataFusionError;
 use thiserror::Error;
 use hyper::http::Error as HttpError;
 use hyper::http::uri::InvalidUri;
+use hyper::http::uri::InvalidUriParts;
 use hyper::Error as HyperError;
 use std::io::Error as IoError;
 
@@ -14,6 +15,9 @@ pub enum LoadBalancerError {
 
     #[error("Invalid uri")]
     InvalidUri(#[from] InvalidUri),
+
+    #[error("InvalidUriParts error")]
+    InvalidUriParts(#[from] InvalidUriParts),
 
     #[error("ArrowError")]
     ArrowError(#[from] ArrowError),

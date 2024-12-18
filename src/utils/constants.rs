@@ -7,7 +7,7 @@ pub const LOAD_BALANCER_NAME: &str = "ultra";
 pub const MAX_DB_CONS: u32 = 100;
 pub const TABLE_NAME: &str = "workers"; // postgres/sqlite table name
 pub const DF_TABLE_NAME: &str = "workers"; // datafusion table name
-pub const HEALTH_ROUTE: &str = "/alive";
+pub const HEALTH_ROUTE: &str = "alive";
 
 pub mod env {
     pub const PG_DATABASE_URL_ENV_VAR: &str = "PG_DATABASE_URL";
