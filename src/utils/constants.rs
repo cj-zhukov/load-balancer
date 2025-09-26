@@ -45,13 +45,3 @@ pub static LOAD_BALANCER_ADDRESS_SECRET: LazyLock<String> = LazyLock::new(|| {
     }
     secret
 });
-
-// pub static WORKERS_ADDRESSES_SECRET: LazyLock<String> = LazyLock::new(|| {
-//     dotenv().ok();
-//     let secret = std_env::var(env::WORKERS_ADDRESSES_ENV_VAR)
-//         .expect("WORKERS_ADDRESSES must be set.");
-//     if secret.is_empty() {
-//         panic!("WORKERS_ADDRESSES must not be empty.");
-//     }
-//     secret
-// });

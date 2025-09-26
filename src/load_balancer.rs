@@ -220,10 +220,6 @@ impl LoadBalancer {
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
                     let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
-                    // if let Err(e) = worker_url.parse::<Uri>() {
-                    //     return Err(LoadBalancerError::InvalidUri(e));
-                    // }
-
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
                     match alive(worker_url_health).await? {
@@ -282,10 +278,6 @@ impl LoadBalancer {
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
                     let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
-                    // if let Err(e) = worker_url.parse::<Uri>() {
-                    //     return Err(LoadBalancerError::InvalidUri(e));
-                    // }
-
                     let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
                     let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
                     match alive(worker_url_health).await? {
