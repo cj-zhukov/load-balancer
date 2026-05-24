@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use chrono::NaiveDateTime;
 use datafusion::arrow::array::{BooleanArray, Int64Array, RecordBatch, StringArray};
-use datafusion::prelude::*;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::prelude::*;
 use datafusion::scalar::ScalarValue;
-use serde_json::Value;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::DataStoreError;
 
@@ -17,7 +17,7 @@ pub struct Table {
     pub worker_name: String,
     pub port_name: String,
     pub active: bool,
-    pub info: Option<Value>, 
+    pub info: Option<Value>,
     pub inserted_at: NaiveDateTime,
 }
 
@@ -33,10 +33,18 @@ impl Table {
             Field::new("inserted_at", DataType::Utf8, true),
         ])
     }
-}
 
-impl Table {
-    pub fn to_df(ctx: &SessionContext, records: &mut Vec<Self>) -> Result<DataFrame, DataStoreError> {
+    pub fn to_df(
+        ctx: &SessionContext,
+        records: &mut Vec<Self>,
+    ) -> Result<DataFrame, DataStoreError> {
+        let batch = Self::to_record_batch(records)?;
+        let df = ctx.read_batch(batch)?;
+        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for this col
+        Ok(df)
+    }
+
+    fn to_record_batch(records: &mut Vec<Self>) -> Result<RecordBatch, DataStoreError> {
         let mut ids = Vec::new();
         let mut server_names = Vec::new();
         let mut worker_names = Vec::new();
@@ -51,21 +59,25 @@ impl Table {
             worker_names.push(record.worker_name.as_ref());
             port_names.push(record.port_name.as_ref());
             actives.push(record.active);
+
             let info = match &mut record.info {
-                Some(v) => {
-                    Some(serde_json::to_string(&v).map_err(|e| DataStoreError::UnexpectedError(e.into()))?)
-                }
-                None => None
+                Some(v) => Some(
+                    serde_json::to_string(v)
+                        .map_err(|e| DataStoreError::UnexpectedError(e.into()))?,
+                ),
+                None => None,
             };
+
             infos.push(info);
             inserted_at_all.push(record.inserted_at.to_string());
         }
 
         let schema = Self::schema();
+
         let batch = RecordBatch::try_new(
-            schema.into(),
+            Arc::new(schema),
             vec![
-                Arc::new(Int64Array::from(ids)), 
+                Arc::new(Int64Array::from(ids)),
                 Arc::new(StringArray::from(server_names)),
                 Arc::new(StringArray::from(worker_names)),
                 Arc::new(StringArray::from(port_names)),
@@ -74,9 +86,7 @@ impl Table {
                 Arc::new(StringArray::from(inserted_at_all)),
             ],
         )?;
-        let df = ctx.read_batch(batch)?;
-        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for this col
 
-        Ok(df)
+        Ok(batch)
     }
 }
