@@ -1,39 +1,38 @@
 use color_eyre::eyre::Report;
 use datafusion::arrow::error::ArrowError;
 use datafusion::error::DataFusionError;
-use thiserror::Error;
+use hyper::http::uri::{InvalidUri, InvalidUriParts};
 use hyper::http::Error as HttpError;
-use hyper::http::uri::InvalidUri;
-use hyper::http::uri::InvalidUriParts;
 use hyper::Error as HyperError;
 use std::io::Error as IoError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum LoadBalancerError {
-    #[error("Empty worker hosts address")]
+    #[error("worker host address is empty")]
     EmptyWorkerHostAddress,
 
-    #[error("Invalid uri")]
+    #[error("invalid uri")]
     InvalidUri(#[from] InvalidUri),
 
-    #[error("InvalidUriParts error")]
+    #[error("invalid uri parts")]
     InvalidUriParts(#[from] InvalidUriParts),
 
-    #[error("ArrowError")]
-    ArrowError(#[from] ArrowError),
+    #[error("arrow error")]
+    Arrow(#[from] ArrowError),
 
-    #[error("DataFusionError")]
-    DataFusionError(#[from] DataFusionError),
+    #[error("datafusion error")]
+    DataFusion(#[from] DataFusionError),
 
-    #[error("IO error")]
-    IoError(#[from] IoError),
+    #[error("io error")]
+    Io(#[from] IoError),
 
-    #[error("HTTP connections error")]
-    HttpError(#[from] HttpError),
+    #[error("http error")]
+    Http(#[from] HttpError),
 
-    #[error("Hyper error")]
-    HyperError(#[from] HyperError),
-    
-    #[error("Unexpected error")]
-    UnexpectedError(#[source] Report),
+    #[error("hyper error")]
+    Hyper(#[from] HyperError),
+
+    #[error(transparent)]
+    Unexpected(#[from] Report),
 }
