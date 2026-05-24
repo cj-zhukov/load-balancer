@@ -76,3 +76,7 @@ The project uses:
 This project is designed to work together with a separate worker server implementation:
 
 - https://github.com/cj-zhukov/worker-server
+
+## Setup
+
+Example of Postgres URL: postgresql://user_name:password@localhost:5432/db_name
