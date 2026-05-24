@@ -33,18 +33,13 @@ impl Table {
             Field::new("inserted_at", DataType::Utf8, true),
         ])
     }
+}
 
+impl Table {
     pub fn to_df(
         ctx: &SessionContext,
         records: &mut Vec<Self>,
     ) -> Result<DataFrame, DataStoreError> {
-        let batch = Self::to_record_batch(records)?;
-        let df = ctx.read_batch(batch)?;
-        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?; // #TODO provide schema for this col
-        Ok(df)
-    }
-
-    fn to_record_batch(records: &mut Vec<Self>) -> Result<RecordBatch, DataStoreError> {
         let mut ids = Vec::new();
         let mut server_names = Vec::new();
         let mut worker_names = Vec::new();
@@ -62,7 +57,7 @@ impl Table {
 
             let info = match &mut record.info {
                 Some(v) => Some(
-                    serde_json::to_string(v).map_err(|e| DataStoreError::Unexpected(e.into()))?,
+                    serde_json::to_string(&v).map_err(|e| DataStoreError::Unexpected(e.into()))?,
                 ),
                 None => None,
             };
@@ -72,9 +67,8 @@ impl Table {
         }
 
         let schema = Self::schema();
-
         let batch = RecordBatch::try_new(
-            Arc::new(schema),
+            schema.into(),
             vec![
                 Arc::new(Int64Array::from(ids)),
                 Arc::new(StringArray::from(server_names)),
@@ -86,6 +80,8 @@ impl Table {
             ],
         )?;
 
-        Ok(batch)
+        let df = ctx.read_batch(batch)?;
+        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?;
+        Ok(df)
     }
 }
