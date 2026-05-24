@@ -79,4 +79,16 @@ This project is designed to work together with a separate worker server implemen
 
 ## Setup
 
-Example of Postgres URL: postgresql://user_name:password@localhost:5432/db_name
+Example PostgreSQL connection string:
+
+```text
+postgresql://user_name:password@localhost:5432/db_name
+```
+
+## Running
+
+Example request to the load balancer:
+
+```bash
+curl --request GET "http://localhost:8080"
+```
