@@ -1,27 +1,27 @@
 use color_eyre::eyre::Report;
-use datafusion::error::DataFusionError;
-use thiserror::Error;
 use datafusion::arrow::error::ArrowError;
-use sqlx::error::Error as DBError;
+use datafusion::error::DataFusionError;
+use sqlx::error::Error as SqlxError;
 use sqlx::migrate::MigrateError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DataStoreError {
-    #[error("Dataframe is empty")]
-    EmptyDataframeError,
+    #[error("dataframe is empty")]
+    EmptyDataframe,
 
-    #[error("ArrowError")]
-    ArrowError(#[from] ArrowError),
+    #[error("arrow error")]
+    Arrow(#[from] ArrowError),
 
-    #[error("DataFusionError")]
-    DataFusionError(#[from] DataFusionError),
+    #[error("datafusion error")]
+    DataFusion(#[from] DataFusionError),
 
-    #[error("SQLx db error")]
-    DBError(#[from] DBError),
+    #[error("database error")]
+    Database(#[from] SqlxError),
 
-    #[error("MigrateError sqlx error")]
-    MigrateError(#[from] MigrateError),
-    
-    #[error("Unexpected error")]
-    UnexpectedError(#[source] Report),
+    #[error("database migration error")]
+    Migration(#[from] MigrateError),
+
+    #[error(transparent)]
+    Unexpected(#[from] Report),
 }

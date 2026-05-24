@@ -62,8 +62,7 @@ impl Table {
 
             let info = match &mut record.info {
                 Some(v) => Some(
-                    serde_json::to_string(v)
-                        .map_err(|e| DataStoreError::UnexpectedError(e.into()))?,
+                    serde_json::to_string(v).map_err(|e| DataStoreError::Unexpected(e.into()))?,
                 ),
                 None => None,
             };
