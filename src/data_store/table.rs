@@ -33,13 +33,8 @@ impl Table {
             Field::new("inserted_at", DataType::Utf8, true),
         ])
     }
-}
 
-impl Table {
-    pub fn to_df(
-        ctx: &SessionContext,
-        records: &mut Vec<Self>,
-    ) -> Result<DataFrame, DataStoreError> {
+    fn to_record_batch(records: &[Self]) -> Result<RecordBatch, DataStoreError> {
         let mut ids = Vec::new();
         let mut server_names = Vec::new();
         let mut worker_names = Vec::new();
@@ -50,14 +45,14 @@ impl Table {
 
         for record in records {
             ids.push(record.id);
-            server_names.push(record.server_name.as_ref());
-            worker_names.push(record.worker_name.as_ref());
-            port_names.push(record.port_name.as_ref());
+            server_names.push(record.server_name.as_str());
+            worker_names.push(record.worker_name.as_str());
+            port_names.push(record.port_name.as_str());
             actives.push(record.active);
 
-            let info = match &mut record.info {
+            let info = match &record.info {
                 Some(v) => Some(
-                    serde_json::to_string(&v).map_err(|e| DataStoreError::Unexpected(e.into()))?,
+                    serde_json::to_string(v).map_err(|e| DataStoreError::Unexpected(e.into()))?,
                 ),
                 None => None,
             };
@@ -68,7 +63,7 @@ impl Table {
 
         let schema = Self::schema();
         let batch = RecordBatch::try_new(
-            schema.into(),
+            Arc::new(schema),
             vec![
                 Arc::new(Int64Array::from(ids)),
                 Arc::new(StringArray::from(server_names)),
@@ -79,9 +74,13 @@ impl Table {
                 Arc::new(StringArray::from(inserted_at_all)),
             ],
         )?;
+        Ok(batch)
+    }
 
+    pub fn to_df(ctx: &SessionContext, records: &[Self]) -> Result<DataFrame, DataStoreError> {
+        let batch = Self::to_record_batch(records)?;
         let df = ctx.read_batch(batch)?;
-        let df = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?;
-        Ok(df)
+        let res = df.with_column("count_cons", Expr::Literal(ScalarValue::Int64(Some(0))))?;
+        Ok(res)
     }
 }

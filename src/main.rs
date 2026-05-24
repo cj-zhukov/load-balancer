@@ -12,8 +12,8 @@ use load_balancer::{
     domain::Database, 
     handler, 
     load_balancer::Algorithm, 
-    service::{PostgresDb, SqliteDb}, 
-    utils::{df_to_table, DF_TABLE_NAME, LOAD_BALANCER_ADDRESS_SECRET, LOAD_BALANCER_NAME, MAX_DB_CONS, PG_DATABASE_URL, SQLITE_DATABASE_URL, TABLE_NAME}, 
+    service::*, 
+    utils::*, 
     LoadBalancer 
 };
 
@@ -32,9 +32,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 where 1 = 1
                                 and server_name = '{LOAD_BALANCER_NAME}' 
                                 and active is true");
-    let mut records = db.fetch_data(&sql).await?;
+    let records = db.fetch_data(&sql).await?;
     let ctx = SessionContext::new();
-    let workers = Table::to_df(&ctx, &mut records)?;
+    let workers = Table::to_df(&ctx, &records)?;
     df_to_table(&ctx, workers, DF_TABLE_NAME).await?; 
 
     let mut load_balancer = LoadBalancer::new(ctx, 1);
@@ -54,7 +54,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tokio::task::spawn(async move {
             let service = service_fn(move |req| handler(req, load_balancer_clone.clone()));
             let http = http1::Builder::new();
-
             if let Err(err) = http.serve_connection(io, service).await {
                 eprintln!("Failed to serve connection: {:?}", err);
             }

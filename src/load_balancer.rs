@@ -64,11 +64,11 @@ impl LoadBalancer {
         let new_host = new_uri
             .host()
             .wrap_err(format!("failed parsing uri: {new_uri} to get host"))
-            .map_err(|e| LoadBalancerError::Unexpected(e))?;
+            .map_err(LoadBalancerError::Unexpected)?;
         let new_port = new_uri
             .port()
             .wrap_err(format!("failed parsing uri: {new_uri} to get port"))
-            .map_err(|e| LoadBalancerError::Unexpected(e))?;
+            .map_err(LoadBalancerError::Unexpected)?;
         let new_address = format!("{new_host}:{new_port}");
 
         let headers = req.headers().clone();
@@ -77,7 +77,7 @@ impl LoadBalancer {
             .method(req.method())
             .uri(&new_uri)
             .body(req.into_body())
-            .map_err(|e| LoadBalancerError::Http(e))?;
+            .map_err(LoadBalancerError::Http)?;
 
         for (key, value) in headers.iter() {
             new_req.headers_mut().insert(key, value.clone());
@@ -113,10 +113,10 @@ impl LoadBalancer {
         for worker in workers {
             let worker_name = worker.name.clone()
                 .wrap_err("worker name is empty")
-                .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                .map_err(LoadBalancerError::Unexpected)?;
             let worker_port = worker.port.clone()
                 .wrap_err("worker port is empty")
-                .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                .map_err(LoadBalancerError::Unexpected)?;
             let worker_url = format!("http://{}:{}", worker_name, worker_port);
             let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
             let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
@@ -134,12 +134,12 @@ impl LoadBalancer {
                     let worker_name = res.0
                         .host()                
                         .wrap_err("worker name is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?
+                        .map_err(LoadBalancerError::Unexpected)?
                         .to_string();
                     let worker_port = res.0
                         .port()
                         .wrap_err("worker port is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?
+                        .map_err(LoadBalancerError::Unexpected)?
                         .to_string();
 
                     worker_names.push(worker_name);
@@ -173,7 +173,7 @@ impl LoadBalancer {
         let active_workers = workers_df
             .join(workers_status, JoinType::Inner, &["worker_name", "port_name"], &["worker_name2", "port_name2"], None)?
             .drop_columns(&["worker_name2", "port_name2"])?;
-        self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
+        self.ctx.deregister_table(DF_TABLE_NAME.to_string())?;
         df_to_table(&self.ctx, active_workers, DF_TABLE_NAME).await?;
 
         Ok(())
@@ -208,15 +208,15 @@ impl LoadBalancer {
                 let res = loop {
                     let worker = workers.get(idx)
                         .wrap_err("workers are empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_name = worker.name.clone()
                         .wrap_err("worker name is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_port = worker.port.clone()
                         .wrap_err("worker port is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
                     let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
@@ -251,7 +251,7 @@ impl LoadBalancer {
                 let workers = Worker::to_records(df)
                     .await
                     .wrap_err("error when parsing to records")
-                    .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
+                    .map_err(LoadBalancerError::Unexpected)?;
 
                 if workers.is_empty() {
                     return Err(LoadBalancerError::EmptyWorkerHostAddress);
@@ -262,19 +262,19 @@ impl LoadBalancer {
                 let res = loop {
                     let worker = workers.get(idx)
                         .wrap_err("workers is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_name = worker.name.clone()
                         .wrap_err("worker name is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_port = worker.port.clone()
                         .wrap_err("worker port is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_id = worker.id
                         .wrap_err("worker_id port is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
                     let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
@@ -291,7 +291,7 @@ impl LoadBalancer {
                                                         status
                                                         from {DF_TABLE_NAME}");
                             let df = self.ctx.sql(&sql).await?;
-                            self.ctx.deregister_table(format!("{DF_TABLE_NAME}"))?;
+                            self.ctx.deregister_table(DF_TABLE_NAME.to_string())?;
                             df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
                             break worker_url;
                         },
@@ -321,23 +321,23 @@ impl LoadBalancer {
                     let workers = Worker::to_records(df)
                         .await
                         .wrap_err("error when parsing to records")
-                        .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     if workers.is_empty() {
                         return Err(LoadBalancerError::EmptyWorkerHostAddress);
                     }
 
-                    let worker = workers.get(0)
+                    let worker = workers.first()
                         .wrap_err("workers is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_name = worker.name.clone()
                         .wrap_err("worker name is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_port = worker.port.clone()
                         .wrap_err("worker port is empty")
-                        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+                        .map_err(LoadBalancerError::Unexpected)?;
 
                     let worker_url = format!("http://{}:{}", worker_name, worker_port);
                     let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
@@ -358,10 +358,10 @@ impl LoadBalancer {
 async fn alive(url: Uri) -> Result<(Uri, bool), LoadBalancerError> {
     let host = url.host()
         .wrap_err(format!("failed getting host for url: {url}"))
-        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+        .map_err(LoadBalancerError::Unexpected)?;
     let port = url.port_u16()
         .wrap_err(format!("failed getting port for url: {url}"))
-        .map_err(|e| LoadBalancerError::Unexpected(e))?;
+        .map_err(LoadBalancerError::Unexpected)?;
     let addr = format!("{}:{}", host, port);
 
     match TcpStream::connect(addr).await {
@@ -377,7 +377,7 @@ async fn alive(url: Uri) -> Result<(Uri, bool), LoadBalancerError> {
         
             let authority = url.authority()
                 .wrap_err(format!("failed getting authority for url: {url}"))
-                .map_err(|e| LoadBalancerError::Unexpected(e))?
+                .map_err(LoadBalancerError::Unexpected)?
                 .clone();
         
             let req = Request::builder()
