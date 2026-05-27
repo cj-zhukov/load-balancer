@@ -12,6 +12,9 @@ pub enum LoadBalancerError {
     #[error("worker host address is empty")]
     EmptyWorkerHostAddress,
 
+    #[error("no active worker found")]
+    NoHealthyWorkers,
+
     #[error("invalid uri")]
     InvalidUri(#[from] InvalidUri),
 

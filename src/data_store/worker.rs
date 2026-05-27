@@ -6,7 +6,7 @@ use tokio_stream::StreamExt;
 
 use super::DataStoreError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Worker {
     pub id: Option<i64>,
     pub name: Option<String>, 
