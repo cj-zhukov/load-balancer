@@ -8,6 +8,7 @@ pub const MAX_DB_CONS: u32 = 100;
 pub const TABLE_NAME: &str = "workers"; // postgres/sqlite table name
 pub const DF_TABLE_NAME: &str = "workers"; // datafusion table name
 pub const HEALTH_ROUTE: &str = "alive";
+pub const MAX_GET_WORKER_ATTEMPTS: usize = 5;
 
 pub mod env {
     pub const PG_DATABASE_URL_ENV_VAR: &str = "PG_DATABASE_URL";
@@ -18,8 +19,8 @@ pub mod env {
 
 pub static PG_DATABASE_URL: LazyLock<Secret<String>> = LazyLock::new(|| {
     dotenv().ok();
-    let secret = std_env::var(env::PG_DATABASE_URL_ENV_VAR)
-        .expect("PG_DATABASE_URL_ENV_VAR must be set.");
+    let secret =
+        std_env::var(env::PG_DATABASE_URL_ENV_VAR).expect("PG_DATABASE_URL_ENV_VAR must be set.");
     if secret.is_empty() {
         panic!("PG_DATABASE_URL_ENV_VAR must not be empty.");
     }

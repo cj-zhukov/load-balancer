@@ -15,7 +15,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
 use crate::data_store::Worker;
-use crate::utils::{df_to_table, DF_TABLE_NAME, HEALTH_ROUTE};
+use crate::utils::{DF_TABLE_NAME, HEALTH_ROUTE, MAX_GET_WORKER_ATTEMPTS, df_to_table};
 use crate::BoxBody;
 use crate::error::LoadBalancerError;
 
@@ -181,72 +181,39 @@ impl LoadBalancer {
 
     /// Get active worker from pool of all potentially active ones. Checks status of this worker 
     /// with health route, if the worker is not alive, take next one and repeat.
-    async fn get_worker(&mut self) -> Result<Uri, LoadBalancerError> {
-        match self.algorithm {
-            Algorithm::RoundRobin => {
-                let cur_worker = self.current_worker;
-                let round_robin_sql = format!("(({cur_worker} - 1) % (select count(*) from {DF_TABLE_NAME})) + 1");
-                let df = self.ctx
-                    .sql(&format!("select id, worker_name, port_name, count_cons 
-                                    from {DF_TABLE_NAME} 
-                                    where 1 = 1 
-                                    and status is true
-                                    and id = {round_robin_sql}"))
-                    .await
-                    .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
+    pub async fn get_worker(&mut self) -> Result<Uri, LoadBalancerError> {
+        for attempt in 0..MAX_GET_WORKER_ATTEMPTS {
+            match self.try_get_worker().await {
+                Ok(worker_uri) => return Ok(worker_uri),
 
-                let workers = Worker::to_records(df)
-                    .await
-                    .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
-                
-                if workers.is_empty() {
-                    return Err(LoadBalancerError::EmptyWorkerHostAddress);
+                Err(LoadBalancerError::NoHealthyWorkers) => {
+                    eprintln!(
+                        "no healthy workers found, retry: {}",
+                        attempt + 1
+                    );
+
+                    tokio::time::sleep(
+                        tokio::time::Duration::from_millis(100)
+                    ).await;
                 }
 
-                // check each worker if alive
-                let mut idx = 0usize;
-                let res = loop {
-                    let worker = workers.get(idx)
-                        .wrap_err("workers are empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                Err(e) => return Err(e),
+            }
+        }
 
-                    let worker_name = worker.name.clone()
-                        .wrap_err("worker name is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+        Err(LoadBalancerError::NoHealthyWorkers)
+    }
 
-                    let worker_port = worker.port.clone()
-                        .wrap_err("worker port is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
-
-                    let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
-                    let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    match alive(worker_url_health).await? {
-                        (_url, true) => {
-                            self.current_worker += 1;
-                            break worker_url;
-                        },
-                        (_url, false) => {
-                            eprintln!("worker server is not alive: {worker_url}");
-                            idx += 1;
-                        },
-                    }
-                };
-
-                Ok(res)
-            },
-
-            Algorithm::LeastConnections => {
-                let sql = format!("select id, worker_name, port_name, count_cons
-                                            from {DF_TABLE_NAME} 
-                                            where 1 = 1 
-                                            and status is true
-                                            and count_cons = (select min(count_cons) from {DF_TABLE_NAME})");
-                let df = self.ctx
-                    .sql(&sql)
-                    .await
-                    .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
+    async fn try_get_worker(&mut self) -> Result<Uri, LoadBalancerError> {
+        match self.algorithm {
+            Algorithm::RoundRobin => {
+                let sql = format!(
+                    "select id, worker_name, port_name, count_cons
+                     from {DF_TABLE_NAME}
+                     where status is true
+                     order by id"
+                );
+                let df = self.ctx.sql(&sql).await?;
 
                 let workers = Worker::to_records(df)
                     .await
@@ -257,101 +224,133 @@ impl LoadBalancer {
                     return Err(LoadBalancerError::EmptyWorkerHostAddress);
                 }
 
-                // check each worker if alive
-                let mut idx = 0usize;
-                let res = loop {
-                    let worker = workers.get(idx)
-                        .wrap_err("workers is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                let start = self.current_worker % workers.len();
 
-                    let worker_name = worker.name.clone()
-                        .wrap_err("worker name is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                let ordered_workers: Vec<_> = workers[start..]
+                    .iter()
+                    .chain(workers[..start].iter())
+                    .cloned()
+                    .collect();
 
-                    let worker_port = worker.port.clone()
-                        .wrap_err("worker port is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                let (_, worker_uri) = self.find_alive_worker(&ordered_workers).await?;
 
-                    let worker_id = worker.id
-                        .wrap_err("worker_id port is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                self.current_worker += 1;
 
-                    let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
-                    let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    match alive(worker_url_health).await? {
-                        (_url, true) => {
-                            // updating count_cons column and register new table 
-                            let sql = format!("select id, worker_name, port_name,
-                                                        case
-                                                            when id = {worker_id} then count_cons + 1
-                                                            else count_cons
-                                                        end as count_cons,
-                                                        status
-                                                        from {DF_TABLE_NAME}");
-                            let df = self.ctx.sql(&sql).await?;
-                            self.ctx.deregister_table(DF_TABLE_NAME.to_string())?;
-                            df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
-                            break worker_url;
-                        },
-                        (_url, false) => {
-                            eprintln!("worker server is not alive: {worker_url}");
-                            idx += 1;
-                        },
-                    }
-                };
+                Ok(worker_uri)
 
-                Ok(res)   
+            },
+
+            Algorithm::LeastConnections => {
+                let sql = format!(
+                    "select id, worker_name, port_name, count_cons
+                     from {DF_TABLE_NAME}
+                     where status is true
+                     order by count_cons asc"
+                );
+                let df = self.ctx.sql(&sql).await?;
+
+                let workers = Worker::to_records(df)
+                    .await
+                    .wrap_err("error when parsing to records")
+                    .map_err(LoadBalancerError::Unexpected)?;
+
+                let (worker, worker_uri) = self.find_alive_worker(&workers).await?;
+
+                let worker_id = worker
+                    .id
+                    .wrap_err("worker id is empty")
+                    .map_err(LoadBalancerError::Unexpected)?;
+
+                let sql = format!(
+                    "select id, worker_name, port_name,
+                        case
+                            when id = {worker_id} then count_cons + 1
+                            else count_cons
+                        end as count_cons,
+                        status
+                     from {DF_TABLE_NAME}"
+                );
+
+                let df = self.ctx.sql(&sql).await?;
+
+                self.ctx.deregister_table(DF_TABLE_NAME.to_string())?;
+
+                df_to_table(&self.ctx, df, DF_TABLE_NAME).await?;
+
+                Ok(worker_uri)
             },
 
             Algorithm::Random => {
-                let res = loop {
-                    let sql = format!("select id, worker_name, port_name, count_cons
-                                                from {DF_TABLE_NAME} 
-                                                where 1 = 1 
-                                                and status is true
-                                                order by random()
-                                                limit 1");
-                    let df = self.ctx
-                        .sql(&sql)
-                        .await
-                        .map_err(|e| LoadBalancerError::Unexpected(e.into()))?;
+                let sql = format!(
+                    "select id, worker_name, port_name, count_cons
+                     from {DF_TABLE_NAME}
+                     where status is true
+                     order by random()"
+                );
 
-                    let workers = Worker::to_records(df)
-                        .await
-                        .wrap_err("error when parsing to records")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                let df = self.ctx.sql(&sql).await?;
 
-                    if workers.is_empty() {
-                        return Err(LoadBalancerError::EmptyWorkerHostAddress);
-                    }
+                let workers = Worker::to_records(df)
+                    .await
+                    .wrap_err("error when parsing to records")
+                    .map_err(LoadBalancerError::Unexpected)?;      
 
-                    let worker = workers.first()
-                        .wrap_err("workers is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
+                let (_, worker_uri) = self.find_alive_worker(&workers).await?;
 
-                    let worker_name = worker.name.clone()
-                        .wrap_err("worker name is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
-
-                    let worker_port = worker.port.clone()
-                        .wrap_err("worker port is empty")
-                        .map_err(LoadBalancerError::Unexpected)?;
-
-                    let worker_url = format!("http://{}:{}", worker_name, worker_port);
-                    let worker_url = worker_url.parse::<Uri>().map_err(LoadBalancerError::InvalidUri)?;
-                    let worker_url_health = format!("{worker_url}{HEALTH_ROUTE}");
-                    let worker_url_health = Uri::from_str(&worker_url_health).map_err(LoadBalancerError::InvalidUri)?;
-                    match alive(worker_url_health).await? {
-                        (_url, true) => break worker_url,
-                        (_url, false) => eprintln!("worker server is not alive: {worker_url}"),
-                    }
-                };
-                
-                Ok(res)
+                Ok(worker_uri)
             }
         }
+    }
+}
+
+impl LoadBalancer {
+    fn worker_uri(worker: &Worker) -> Result<Uri, LoadBalancerError> {
+        let worker_name = worker
+            .name
+            .as_ref()
+            .wrap_err("worker name is empty")
+            .map_err(LoadBalancerError::Unexpected)?;
+
+        let worker_port = worker
+            .port
+            .as_ref()
+            .wrap_err("worker port is empty")
+            .map_err(LoadBalancerError::Unexpected)?;
+
+        let worker_url = format!("http://{}:{}", worker_name, worker_port);
+
+        worker_url
+            .parse::<Uri>()
+            .map_err(LoadBalancerError::InvalidUri)
+    }
+
+    fn worker_health_uri(worker_uri: &Uri) -> Result<Uri, LoadBalancerError> {
+        let health_url = format!("{worker_uri}{HEALTH_ROUTE}");
+        Uri::from_str(&health_url)
+            .map_err(LoadBalancerError::InvalidUri)
+    }
+
+    async fn find_alive_worker(
+        &self,
+        workers: &[Worker],
+    ) -> Result<(Worker, Uri), LoadBalancerError> {
+        if workers.is_empty() {
+            return Err(LoadBalancerError::EmptyWorkerHostAddress);
+        }
+
+        for worker in workers {
+            let worker_uri = Self::worker_uri(worker)?;
+            let health_uri = Self::worker_health_uri(&worker_uri)?;
+
+            match alive(health_uri).await? {
+                (_, true) => return Ok((worker.clone(), worker_uri)),
+                (_, false) => {
+                    eprintln!("worker server is not alive: {worker_uri}");
+                }
+            }
+        }
+
+        Err(LoadBalancerError::NoHealthyWorkers)
     }
 }
 
